@@ -35,9 +35,9 @@ jobs:
         run: npm run build
         working-directory: frontend
         env:
-          # Set this secret in: GitHub repo → Settings → Secrets → Actions
-          # Value: https://your-app-name.onrender.com
+          # Set these secrets in: GitHub repo → Settings → Secrets → Actions
           REACT_APP_SOCKET_URL: ${{ secrets.REACT_APP_SOCKET_URL }}
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL }}
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3

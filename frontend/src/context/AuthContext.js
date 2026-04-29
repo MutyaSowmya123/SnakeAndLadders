@@ -14,7 +14,8 @@ export function AuthProvider({ children }) {
     if (stored && token) setUser(JSON.parse(stored));
   }, [token]);
 
-  const api = axios.create({ baseURL: '/api' });
+  const API_BASE = process.env.REACT_APP_API_URL || '/api';
+  const api = axios.create({ baseURL: API_BASE });
 
   const login = async (email, password) => {
     setLoading(true); setError('');
