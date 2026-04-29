@@ -194,7 +194,6 @@ function DiceSVG({ value, size = 90, color = '#c0392b', isRolling = false, isLan
 
 /* ── Player tokens ── */
 const P_TOKEN = ['👑','🚀','⭐','🔥'];
-const P_EMOJI_BG = ['#fdecea','#e8f4fd','#eafaf1','#fef9e7'];
 
 /* ── Tile info registry ── */
 const TILE_INFO = {

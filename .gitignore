@@ -10,7 +10,7 @@ frontend/build/
 .env.local
 .env.production
 .env.development
-backend/.env
+backend/.env.example
 
 # Logs
 npm-debug.log*
