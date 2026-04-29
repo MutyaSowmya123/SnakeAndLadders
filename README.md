@@ -1,5 +1,8 @@
 # 🛡️ Fusion Shield — Snake & Ladder
 
+###Try playing 
+https://mutyasowmya123.github.io/SnakeAndLadders/
+
 A feature-rich multiplayer Snake & Ladder game with a React frontend and Node.js/Socket.io backend. Supports both **local pass-and-play** and **real-time online multiplayer** via room codes.
 
 ---
@@ -181,10 +184,3 @@ cd frontend && npm run build
 > **Cost note:** Elastic Beanstalk itself is free — you pay only for the underlying EC2 instance. A `t3.micro` qualifies for the AWS free tier (12 months).
 
 ---
-
-## Test Account
-```
-Email:    test@play.com
-Password: Test1234
-Username: testplayer
-```
