@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { connectSocket, disconnectSocket } from '../socket';
 import GameBoard from '../components/GameBoard';
 import {
   TOTAL_SQUARES, POINTS_PER_SQUARE, PLAYER_COLORS, PLAYER_NAMES_DEFAULT,
@@ -250,13 +251,79 @@ export default function GamePage() {
   const [skipTurn, setSkipTurn]         = useState([false,false,false,false]);
   const [swapPending, setSwapPending]   = useState(null);
   const [lastTile, setLastTile]         = useState(null);
-  const logRef = useRef();
 
-  const names = PLAYER_NAMES_DEFAULT.slice(0, numPlayers);
+  // Online multiplayer
+  const [mode, setMode]                 = useState(null);       // null | 'local' | 'online'
+  const [onlinePhase, setOnlinePhase]   = useState('menu');     // 'menu'|'join'|'waiting_host'|'waiting_player'|'playing'
+  const [roomId, setRoomId]             = useState('');
+  const [roomInput, setRoomInput]       = useState('');
+  const [myPlayerIdx, setMyPlayerIdx]   = useState(null);
+  const [playerNames, setPlayerNames]   = useState(null);       // null = use defaults
+  const logRef = useRef();
+  const socketRef = useRef(null);
+
+  const names = playerNames || PLAYER_NAMES_DEFAULT.slice(0, numPlayers);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
+
+  // Socket.io: connect when online mode is active
+  useEffect(() => {
+    if (mode !== 'online') return;
+    const socket = connectSocket();
+    socketRef.current = socket;
+
+    const syncState = (state) => {
+      setPositions(state.positions);
+      setPoints(state.points);
+      setTurn(state.turn);
+      setNumPlayers(state.numPlayers);
+      setShieldActive(state.shieldActive);
+      setSkipTurn(state.skipTurn);
+      setSwapPending(state.swapPending);
+      setGameOver(state.gameOver);
+      setWinner(state.winner);
+      setRevealedTiles(state.revealedTiles);
+      setLog(state.log);
+      setPlayerNames(state.players.map(p => p.username));
+      if (state.lastTile && state.lastTile !== 'normal') setLastTile(state.lastTile);
+    };
+
+    socket.on('room_created', ({ roomId: id, playerIdx }) => {
+      setRoomId(id); setMyPlayerIdx(playerIdx); setOnlinePhase('waiting_host');
+    });
+    socket.on('room_joined', ({ roomId: id, playerIdx }) => {
+      setRoomId(id); setMyPlayerIdx(playerIdx); setOnlinePhase('waiting_player');
+    });
+    socket.on('room_updated', (state) => {
+      setNumPlayers(state.players.length);
+      setPlayerNames(state.players.map(p => p.username));
+    });
+    socket.on('game_started', (state) => {
+      syncState(state); setOnlinePhase('playing'); setStarted(true);
+    });
+    socket.on('dice_rolled', ({ diceVal: finalVal }) => {
+      setShowModal(true); setRolling(true); setLanded(false); setLastTile(null);
+      let frame = 0;
+      const iv = setInterval(() => {
+        setDiceVal(Math.ceil(Math.random() * 6));
+        if (++frame >= 12) {
+          clearInterval(iv);
+          setDiceVal(finalVal); setRolling(false);
+          setTimeout(() => setLanded(true), 80);
+          setTimeout(() => { setShowModal(false); setLanded(false); }, 1050);
+        }
+      }, 85);
+    });
+    socket.on('game_state', syncState);
+    socket.on('error', ({ msg }) => alert(msg));
+
+    return () => {
+      ['room_created','room_joined','room_updated','game_started','dice_rolled','game_state','error']
+        .forEach(ev => socket.off(ev));
+    };
+  }, [mode]);
 
   function startGame() {
     setPositions(Array(4).fill(0)); setPoints(Array(4).fill(0));
@@ -273,12 +340,26 @@ export default function GamePage() {
     setLog(l => [...l, { msg, color: color||'#888', time }]);
   }
 
+  function createRoom() {
+    socketRef.current?.emit('create_room', { username: user?.username || 'Player 1' });
+  }
+
+  function joinRoom() {
+    if (!roomInput.trim()) return;
+    socketRef.current?.emit('join_room', { roomId: roomInput.trim().toUpperCase(), username: user?.username || 'Player 1' });
+  }
+
   function triggerEffect(msg) {
     setEffect(msg);
     setTimeout(() => setEffect(null), 2500);
   }
 
   function rollDice() {
+    if (mode === 'online') {
+      if (myPlayerIdx !== turn || rolling || gameOver || swapPending !== null) return;
+      socketRef.current?.emit('roll_dice');
+      return;
+    }
     if (rolling || gameOver || swapPending !== null) return;
     if (skipTurn[turn]) {
       addLog(`${P_TOKEN[turn]} ${names[turn]} skips their turn! 🎁`, '#e74c3c');
@@ -379,6 +460,7 @@ export default function GamePage() {
   }
 
   function handleSwap(targetIdx) {
+    if (mode === 'online') { socketRef.current?.emit('confirm_swap', { targetIdx }); return; }
     const cur = swapPending;
     setPositions(p => {
       const np=[...p]; [np[cur], np[targetIdx]]=[np[targetIdx], np[cur]]; return np;
@@ -389,6 +471,140 @@ export default function GamePage() {
   }
 
   const cc = PLAYER_COLORS[turn];
+
+  /* ── MODE SELECTOR ── */
+  if (mode === null) return (
+    <>
+      <style>{CSS}</style>
+      <div style={St.lobby}>
+        <div style={St.lobbyCard}>
+          <div style={{ textAlign:'center', marginBottom:28 }}>
+            <div style={{ fontSize:68, lineHeight:1, marginBottom:10, display:'flex', justifyContent:'center', gap:8 }}>
+              <span style={{ display:'inline-block', animation:'snakeWiggle 1.4s ease-in-out infinite' }}>🐍</span>
+              <span className="float" style={{ display:'inline-block', animationDelay:'0.3s' }}>🎲</span>
+              <span style={{ display:'inline-block', animation:'ladderBounce 1.6s ease-in-out infinite', animationDelay:'0.6s' }}>🪜</span>
+            </div>
+            <h1 className="rainbow" style={St.lobbyTitle}>ROLL FOR MADNESS</h1>
+            <p style={{ color:'#bbb', fontWeight:700, fontSize:12, letterSpacing:2, marginBottom:6 }}>
+              SNAKE &amp; LADDER · REIMAGINED
+            </p>
+            {user && (
+              <p style={{ fontSize:13, color:'#888' }}>
+                Welcome back, <b style={{ color:'#c0392b' }}>{user.username}</b> 👋
+              </p>
+            )}
+          </div>
+          <p style={St.lobbyLabel}>🎮 Select Mode</p>
+          <button style={St.startBtn} onClick={() => setMode('local')}>
+            🏠 Local Play (Same Device)
+          </button>
+          <button
+            style={{ ...St.startBtn, background:'linear-gradient(135deg,#3498db,#2980b9)', marginBottom:10 }}
+            onClick={() => { setMode('online'); connectSocket(); }}
+          >
+            🌐 Online Multiplayer
+          </button>
+          <button style={St.grayBtn} onClick={logout}>← Sign Out</button>
+        </div>
+      </div>
+    </>
+  );
+
+  /* ── ONLINE LOBBY ── */
+  if (mode === 'online' && onlinePhase !== 'playing') return (
+    <>
+      <style>{CSS}</style>
+      <div style={St.lobby}>
+        <div style={St.lobbyCard}>
+          <button
+            style={{ ...St.grayBtn, marginBottom:20 }}
+            onClick={() => { setMode(null); setOnlinePhase('menu'); setPlayerNames(null); disconnectSocket(); }}
+          >
+            ← Back
+          </button>
+
+          {onlinePhase === 'menu' && (
+            <>
+              <h2 style={{ textAlign:'center', fontFamily:"'Fredoka One',cursive", color:'#333', marginBottom:20 }}>
+                🌐 Online Multiplayer
+              </h2>
+              <button style={St.startBtn} onClick={createRoom}>🎉 Create Room</button>
+              <button
+                style={{ ...St.startBtn, background:'linear-gradient(135deg,#27ae60,#2ecc71)', marginBottom:10 }}
+                onClick={() => setOnlinePhase('join')}
+              >
+                🔑 Join Room
+              </button>
+            </>
+          )}
+
+          {onlinePhase === 'join' && (
+            <>
+              <h2 style={{ textAlign:'center', fontFamily:"'Fredoka One',cursive", color:'#333', marginBottom:20 }}>
+                🔑 Join a Room
+              </h2>
+              <input
+                placeholder="ROOM CODE"
+                value={roomInput}
+                onChange={e => setRoomInput(e.target.value.toUpperCase())}
+                style={{
+                  width:'100%', padding:'12px 16px', border:'2.5px solid #ddd', borderRadius:12,
+                  fontSize:22, fontFamily:"'Fredoka One',cursive", textAlign:'center',
+                  letterSpacing:6, marginBottom:12, outline:'none', boxSizing:'border-box',
+                }}
+                maxLength={6}
+              />
+              <button style={St.startBtn} onClick={joinRoom}>🚀 Join Game</button>
+              <button style={St.grayBtn} onClick={() => setOnlinePhase('menu')}>← Back</button>
+            </>
+          )}
+
+          {(onlinePhase === 'waiting_host' || onlinePhase === 'waiting_player') && (
+            <>
+              <div style={{ textAlign:'center', marginBottom:20 }}>
+                <div style={{ fontSize:12, color:'#888', fontWeight:700, marginBottom:8 }}>🎮 Room Code</div>
+                <div style={{
+                  fontFamily:"'Fredoka One',cursive", fontSize:40, color:'#c0392b',
+                  letterSpacing:8, background:'#fdecea', borderRadius:16, padding:'14px 0',
+                }}>
+                  {roomId}
+                </div>
+                <div style={{ fontSize:12, color:'#aaa', marginTop:8 }}>Share this code with friends!</div>
+              </div>
+
+              <div style={St.secLabel}>👥 Players in Room ({numPlayers}/4)</div>
+              {(playerNames || []).map((name, i) => (
+                <div key={i} style={{ display:'flex', gap:10, alignItems:'center', padding:'8px 0', borderBottom:'1px solid #f0f0f0' }}>
+                  <div style={{ ...St.dot, width:32, height:32, fontSize:16, background:PLAYER_COLORS[i] }}>{P_TOKEN[i]}</div>
+                  <span style={{ fontWeight:700, color:'#333', flex:1 }}>{name}</span>
+                  {i === 0 && (
+                    <span style={{ fontSize:10, background:'#fdecea', color:'#c0392b', padding:'2px 8px', borderRadius:20, fontWeight:800 }}>
+                      HOST
+                    </span>
+                  )}
+                </div>
+              ))}
+
+              <div style={{ marginTop:16 }}>
+                {onlinePhase === 'waiting_host'
+                  ? numPlayers >= 2
+                    ? <button style={St.startBtn} onClick={() => socketRef.current?.emit('start_game')}>
+                        🎮 Start Game ({numPlayers} players)
+                      </button>
+                    : <p className="blink" style={{ textAlign:'center', color:'#888', fontWeight:700, fontSize:13 }}>
+                        Waiting for more players to join...
+                      </p>
+                  : <p className="blink" style={{ textAlign:'center', color:'#888', fontWeight:700, fontSize:13 }}>
+                      Waiting for host to start the game...
+                    </p>
+                }
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
 
   /* ── LOBBY ── */
   if (!started) return (
@@ -471,7 +687,10 @@ export default function GamePage() {
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           {user && <span style={{ fontSize:12, color:'rgba(255,255,255,0.7)', fontWeight:700 }}>👤 {user.username}</span>}
-          <button style={St.hBtn} onClick={() => setStarted(false)}>🏠</button>
+          <button style={St.hBtn} onClick={() => {
+            setStarted(false);
+            if (mode === 'online') { setOnlinePhase('menu'); disconnectSocket(); setMode(null); setPlayerNames(null); }
+          }}>🏠</button>
           <button style={St.hBtn} onClick={logout}>Sign out</button>
         </div>
       </div>
@@ -569,7 +788,7 @@ export default function GamePage() {
               <div style={{ display:'flex', justifyContent:'center', marginBottom:12 }}>
                 <DiceSVG value={diceVal||0} size={72} color={cc} />
               </div>
-              {swapPending !== null ? (
+              {swapPending !== null && (mode !== 'online' || myPlayerIdx === swapPending) ? (
                 <>
                   <p style={{ fontSize:12, fontWeight:800, color:'#1abc9c', textAlign:'center', marginBottom:10 }}>
                     🔀 Swap {names[swapPending]} with:
@@ -584,14 +803,28 @@ export default function GamePage() {
                     ))}
                   </div>
                 </>
+              ) : swapPending !== null ? (
+                <p style={{ textAlign:'center', color:'#1abc9c', fontWeight:700, fontSize:13 }}>
+                  🔀 {names[swapPending]} is choosing...
+                </p>
               ) : (
                 <button
-                  className={!rolling ? 'glow-btn' : ''}
-                  style={{ ...St.rollBtn, background:cc, opacity: rolling ? 0.65 : 1 }}
+                  className={!rolling && (mode !== 'online' || myPlayerIdx === turn) ? 'glow-btn' : ''}
+                  style={{
+                    ...St.rollBtn,
+                    background: (mode === 'online' && myPlayerIdx !== turn) ? '#bbb' : cc,
+                    opacity: rolling ? 0.65 : 1,
+                    cursor: (mode === 'online' && myPlayerIdx !== turn) ? 'not-allowed' : 'pointer',
+                  }}
                   onClick={rollDice}
-                  disabled={rolling||gameOver}
+                  disabled={rolling || gameOver || (mode === 'online' && myPlayerIdx !== turn)}
                 >
-                  {rolling ? '🎲 Rolling...' : `🎲 Roll, ${names[turn]}!`}
+                  {rolling
+                    ? '🎲 Rolling...'
+                    : mode === 'online' && myPlayerIdx !== turn
+                      ? `⏳ ${names[turn]}'s turn...`
+                      : `🎲 Roll, ${names[turn]}!`
+                  }
                 </button>
               )}
             </div>
@@ -606,8 +839,13 @@ export default function GamePage() {
                 {P_TOKEN[winner]} {points[winner]} pts
               </div>
               <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap', justifyContent:'center' }}>
-                <button style={St.reBtn} onClick={startGame}>🔄 Again</button>
-                <button style={{ ...St.reBtn, background:'#555' }} onClick={() => setStarted(false)}>🏠</button>
+                {(mode !== 'online' || myPlayerIdx === 0) && (
+                  <button style={St.reBtn} onClick={() => mode === 'online' ? socketRef.current?.emit('restart_game') : startGame()}>🔄 Again</button>
+                )}
+                <button style={{ ...St.reBtn, background:'#555' }} onClick={() => {
+                  setStarted(false);
+                  if (mode === 'online') { setOnlinePhase('menu'); disconnectSocket(); setMode(null); setPlayerNames(null); }
+                }}>🏠</button>
               </div>
             </div>
           )}
