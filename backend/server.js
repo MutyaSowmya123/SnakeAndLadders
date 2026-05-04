@@ -21,12 +21,20 @@ const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/fusionsh
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-}).then(() => console.log('MongoDB connected'))
-  .catch(() => console.log('MongoDB not available, using in-memory store'));
+  serverSelectionTimeoutMS: 8000,
+}).then(() => console.log('✅ MongoDB connected'))
+  .catch((err) => console.error('❌ MongoDB failed:', err.message));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/game', gameRoutes);
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Fusion Shield' }));
+app.get('/api/health', (req, res) => {
+  const states = { 0:'disconnected', 1:'connected', 2:'connecting', 3:'disconnecting' };
+  res.json({
+    status: 'ok',
+    app: 'Fusion Shield',
+    mongodb: states[mongoose.connection.readyState] || 'unknown',
+  });
+});
 
 registerGameSocket(io);
 

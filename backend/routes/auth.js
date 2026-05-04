@@ -17,8 +17,11 @@ try {
 
 async function findUser(query) {
   if (User) {
-    try { return await User.findOne(query); } catch {}
+    try { return await User.findOne(query); } catch (e) {
+      console.error('MongoDB findUser failed:', e.message);
+    }
   }
+  console.warn('⚠️  Using in-memory store — data will not persist across restarts');
   const [key, val] = Object.entries(query)[0];
   return inMemoryUsers.find(u => u[key] === val) || null;
 }
@@ -28,9 +31,13 @@ async function createUser(data) {
     try {
       const u = new User(data);
       await u.save();
+      console.log('✅ User saved to MongoDB:', data.username);
       return u;
-    } catch {}
+    } catch (e) {
+      console.error('MongoDB createUser failed:', e.message);
+    }
   }
+  console.warn('⚠️  Using in-memory store — data will not persist across restarts');
   const u = { ...data, _id: Date.now().toString(), stats: { gamesPlayed: 0, gamesWon: 0, totalPoints: 0 } };
   inMemoryUsers.push(u);
   return u;
